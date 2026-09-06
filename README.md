@@ -110,12 +110,15 @@ Hammerspoon runs the Lua code in `init.lua` and connects it to macOS system serv
 1. macOS Accessibility exposes a structured description of Notion's visible interface.
 2. The script finds the current peek window and its **Actions** control in that accessibility tree.
 3. It uses the control's screen position to perform a normal mouse-style click and open the menu.
-4. It finds the **Available offline** menu item and inspects the switch before changing anything.
-5. If the switch is off, it invokes that item exactly once. If it is on, it closes the menu without pressing it.
-6. It sends Notion's **Control + Shift + J** shortcut to open the next database page.
-7. A page signature and polling loop confirm that the next page loaded before processing continues.
+4. It finds **Available offline** by its label inside the visible Actions search panel and collection, without requiring a particular row role.
+5. It reads an explicit Accessibility switch state when available. Otherwise, it inspects the switch's color and thumb position in a small screen capture. A recognized OFF switch receives one mouse click; an ON switch is left untouched. An unknown state stops the batch.
+6. After enabling a page, it reads the state again (reopening Actions if necessary). It counts the page as newly enabled only after confirming ON. It never retries the toggle.
+7. It sends Notion's **Control + Shift + J** shortcut to open the next database page.
+8. A page ID from the peek's accessible full-page link, with accessible text as a fallback, and a polling loop confirm that a different page loaded before processing continues.
 
-The script captures only the small rectangle containing the **Available offline** menu row, analyzes it in memory to read the switch color, and does not save the image.
+The script captures only the small rectangle containing the **Available offline** menu row, analyzes it in memory, and does not save the image. It scopes Actions to the visible peek in the active tab and rejects hidden, disabled, off-screen, zero-sized, and covered controls. Inactive Notion tabs can incorrectly report themselves as focused, so the script also checks frames and performs read-only Accessibility hit tests.
+
+Switching applications, windows, or tabs stops the batch. Cancelling after an enable click but before its verification leaves that page's new setting in place, but does not count it as verified. Rerunning is safe: the page will be checked before any further activation.
 
 ## Configuration
 
@@ -165,12 +168,13 @@ In Hammerspoon, `alt` means the Mac's **Option** key.
 - Reload Hammerspoon and try again.
 - A Notion interface update may have changed the accessibility labels used by the script.
 
-### “Could not determine offline state”
+### An unknown offline state or “unrecognized switch appearance”
 
 - Enable Hammerspoon under macOS **Privacy & Security → Screen Recording** or **Screen & System Audio Recording**.
 - Quit and reopen Hammerspoon after changing the permission.
 - Keep the Actions menu visible and avoid moving the pointer or typing while the script runs.
-- A change to Notion's colors or switch design may require adjustment to the pixel thresholds in `isOfflineEnabled()`.
+- The visual fallback was calibrated against Notion's September 2026 light appearance: a blue track with a white thumb on the right means ON; a neutral gray track with a white thumb on the left means OFF. Both color and thumb position must match. Dark mode, increased contrast, different switch proportions, or a Notion redesign can cause a safe stop and require recalibration.
+- If enabling cannot be confirmed, the batch stops without retrying. Reopen Actions and inspect the setting before rerunning.
 
 ### The batch stops before the expected last page
 
@@ -181,16 +185,24 @@ In Hammerspoon, `alt` means the Mac's **Option** key.
 
 ## Limitations and important Notion behavior
 
+- **Notion Calendar is a separate app.** Hammerspoon must target Notion Desktop by bundle id (`notion.id`). Resolving the app by the name `Notion` can bind to Notion Calendar (`com.cron.electron`) and break next-page shortcuts.
+- **End of a view** is reported as finished when Ctrl+Shift+J no longer changes the peek. A “returned to the first page” message means the view wrapped.
+
 - This is a macOS-only automation for the Notion desktop app.
 - It processes the current database view from the open page forward; it does not discover every database in a workspace.
 - Making a parent page available offline does not automatically make all of its subpages available offline.
 - Offline availability is device-specific. Run the process separately on each Mac that needs the pages.
 - The content must be downloaded while Notion is reachable. If the active network completely blocks Notion, connect through an organization-approved network first.
 - The script depends on Notion's current Accessibility labels, layout, colors, and keyboard shortcut. A Notion update could require changes.
+- A next-page timeout means Notion did not expose a different stable page within the polling limit; this can indicate either the end of the view or a navigation problem. The batch does not claim that every workspace page was covered.
 - Notion may continue syncing or downloading after the automation finishes. Verify completion before disconnecting.
 - Not every advanced Notion block or operation is supported offline.
 
 See Notion's official documentation for [using pages offline](https://www.notion.com/help/use-pages-offline), [keyboard shortcuts](https://www.notion.com/help/keyboard-shortcuts), and [network-related error messages](https://www.notion.com/help/notion-error-messages).
+
+## Local regression checks
+
+Run `luac -p init.lua` for syntax validation and `lua tests/offline_batch_test.lua` for simulated Accessibility and timer tests. These cover visible-tab selection, generic menu rows, explicit Accessibility state, unknown screenshots, enable-once verification, counters, advancement, cancellation, focus loss, duplicate pages, and the safety limit. They do not replace a live check after a Notion update.
 
 ## Privacy and security
 
